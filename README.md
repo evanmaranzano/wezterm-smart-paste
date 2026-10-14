@@ -19,7 +19,7 @@ WezTerm(Windows / WSL)智能粘贴:一个 ~8ms 的 Rust 单文件剪贴板分类
 | 纯图片(PNG/DIB/Bitmap,无任何文本格式) | 存 `%TEMP%\smart-paste-<时间戳>.png`,以 bracketed paste 注入 `/mnt/c/...` 路径 | ~40-80ms(内置 GDI+ 编码,无 pwsh) |
 | 文本,或文本+图片并存(如 Excel) | WezTerm 原生 `PasteFrom`(与 Windows Terminal 一致) | ~8ms |
 
-图片分支优先尝试剪贴板原生 PNG 字节(原样落盘,零编码),其次 `CF_BITMAP` 经 GDI+ `GdipSaveImageToFile` 编码;两者都失败才退回裸 `IMAGE` 标记由 pwsh 兜底。**文本+图片并存时让位文本粘贴**,不误伤 Excel 复制。
+图片分支优先尝试剪贴板原生 PNG/JPEG/WebP 字节(原样落盘,零编码),其次 `CF_BITMAP` 经 GDI+ `GdipSaveImageToFile` 编码;两者都失败才退回裸 `IMAGE` 标记由 pwsh 兜底。**文本+图片并存时让位文本粘贴**,不误伤 Excel 复制。
 
 omp、Claude Code 等 CLI agent 会把"粘贴的单个图片文件路径"自动加载为图片附件,因此注入路径即完成贴图。普通 shell 里注入的就是一个可直接使用的图片路径。
 

@@ -78,7 +78,7 @@ struct GdiplusStartupInput {
     gdiplus_version: u32,
     debug_event_callback: *mut c_void,
     suppress_background_thread: i32,
-    suppress_external_codec: i32,
+    suppress_external_codecs: i32,
 }
 
 // gnu 工具链无 gdiplus 导入库也无 dlltool，改为运行时 LoadLibrary/GetProcAddress
@@ -253,33 +253,46 @@ unsafe fn save_clipboard_png() -> Option<String> {
         dir, st.year, st.month, st.day, st.hour, st.minute, st.second, st.millis
     );
 
-    // 1) 剪贴板原生 PNG 字节
-    for fmt_name in ["PNG", "image/png"] {
+    // 1) 剪贴板原生图片字节（PNG/JPEG/WebP），原样落盘，跳过 GDI+ 编码
+    //    Qt 类生产者（微信截图等）常同时放 image/png 等多种格式
+    let stem = name.strip_suffix(".png").unwrap_or(&name);
+    for (fmt_name, ext) in [
+        ("PNG", ".png"), ("image/png", ".png"),
+        ("image/jpeg", ".jpg"), ("JPEG", ".jpg"),
+        ("image/webp", ".webp"),
+    ] {
         let fmt = RegisterClipboardFormatW(wide(fmt_name).as_ptr());
         if fmt == 0 {
             continue;
         }
         if let Some(bytes) = clipboard_bytes(fmt) {
-            if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
-                if std::fs::write(&name, &bytes).is_ok() {
-                    return Some(name);
+            let ok = match ext {
+                ".png" => bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]),
+                ".jpg" => bytes.starts_with(&[0xFF, 0xD8]),
+                ".webp" => bytes.len() > 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP",
+                _ => false,
+            };
+            if ok {
+                let fname = format!("{stem}{ext}");
+                if std::fs::write(&fname, &bytes).is_ok() {
+                    return Some(fname);
                 }
             }
         }
     }
 
     // 2) GDI+ 编码
-    let Some(g) = load_gdiplus() else { return None };
     let hbm = GetClipboardData(CF_BITMAP);
     if hbm.is_null() {
         return None;
     }
+    let Some(g) = load_gdiplus() else { return None };
     let mut token: usize = 0;
     let input = GdiplusStartupInput {
         gdiplus_version: 1,
         debug_event_callback: ptr::null_mut(),
-        suppress_background_thread: 0,
-        suppress_external_codec: 0,
+        suppress_background_thread: 0, // 置 1 会导致 GdipSaveImageToFile 失败（实测回归）
+        suppress_external_codecs: 0,
     };
     if (g.startup)(&mut token, &input, ptr::null_mut()) != 0 {
         return None;
@@ -384,11 +397,16 @@ fn main() {
             if out.is_empty() {
                 let has_text = IsClipboardFormatAvailable(CF_UNICODETEXT) != 0
                     || IsClipboardFormatAvailable(CF_TEXT) != 0;
-                let png_fmt = RegisterClipboardFormatW(wide("PNG").as_ptr());
+                let custom_img = ["PNG", "image/png", "image/jpeg", "JPEG", "image/webp"]
+                    .iter()
+                    .any(|n| {
+                        let f = RegisterClipboardFormatW(wide(n).as_ptr());
+                        f != 0 && IsClipboardFormatAvailable(f) != 0
+                    });
                 let has_image = IsClipboardFormatAvailable(CF_BITMAP) != 0
                     || IsClipboardFormatAvailable(CF_DIB) != 0
                     || IsClipboardFormatAvailable(CF_DIBV5) != 0
-                    || (png_fmt != 0 && IsClipboardFormatAvailable(png_fmt) != 0);
+                    || custom_img;
                 if has_image && !has_text {
                     match save_clipboard_png() {
                         Some(p) => {
